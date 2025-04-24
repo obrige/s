@@ -2,6 +2,9 @@
 use_default_settings: true
 search:
   autocomplete: "duckduckgo"
+  formats:
+    - html
+    - json
 server:
   # base_url is defined in the SEARXNG_BASE_URL environment variable, see .env and docker-compose.yml
   secret_key: "%(ENV_SEARXNG_SECRET)s"  # change this!
