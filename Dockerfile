@@ -1,5 +1,3 @@
 FROM searxng/searxng:latest
-RUN mkdir /tmp/temp_searxng  # 临时创建文件夹
-COPY ./searxng /tmp/temp_searxng # 复制文件到临时文件夹
-RUN cp -R /tmp/temp_searxng/* /etc/searxng/ # 从临时文件夹复制到目标位置
-RUN rm -rf /tmp/temp_searxng
+RUN chmod 777 /etc/searxng # 修改已存在目录的权限 (可选，但为了成功 COPY 可能需要写入权限)
+COPY ./searxng /etc/searxng # 将本地 searxng 目录的内容复制到镜像的 /etc/searxng
