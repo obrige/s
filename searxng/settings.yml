@@ -10,17 +10,21 @@ server:
   image_proxy: true
 ui:
   static_use_hash: true
-engines:
-  - name: pixiv
-    disabled: false
-    pixiv_image_proxies:
-      - https://pximg.cocomi.eu.org
-    
+engines:    
   - name: brave
     engine: brave
     shortcut: br
     time_range_support: true
     paging: true
-    disabled: false
+    disabled: true
     categories: [general, web]
     brave_category: search
+
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    startpage_categ: web
+    disabled: true
+    categories: [general, web]
+    additional_tests:
+      rosebud: *test_rosebud
