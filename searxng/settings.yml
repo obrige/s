@@ -5,8 +5,8 @@ server:
   limiter: false
   image_proxy: true
 
-redis:
-  url: redis://dragonfly.database.svc.cluster.local:6379?db=10
+#redis:
+#  url: redis://dragonfly.database.svc.cluster.local:6379?db=10
 
 search:
   safe_search: 0
