@@ -1,4 +1,3 @@
-# see https://docs.searxng.org/admin/settings/settings.html#settings-use-default-settings
 use_default_settings: true
 search:
   autocomplete: "duckduckgo"
@@ -6,7 +5,6 @@ search:
     - html
     - json
 server:
-  # base_url is defined in the SEARXNG_BASE_URL environment variable, see .env and docker-compose.yml
   secret_key: "%(ENV_SEARXNG_SECRET)s"  # change this!
   limiter: true  # can be disabled for a private instance
   image_proxy: true
@@ -17,3 +15,12 @@ engines:
     disabled: false
     pixiv_image_proxies:
       - https://pximg.cocomi.eu.org
+    
+  - name: brave
+    engine: brave
+    shortcut: br
+    time_range_support: true
+    paging: true
+    disabled: false
+    categories: [general, web]
+    brave_category: search
