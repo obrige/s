@@ -18,7 +18,7 @@ ui:
   static_use_hash: true
   default_theme: simple
   theme_args:
-    simple_style: dark
+    simple_style: light
   infinite_scroll: true
   results_on_new_tab: true
 
