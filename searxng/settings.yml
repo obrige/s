@@ -12,7 +12,7 @@ server:
   image_proxy: true
   
 general:
-  instance_name: LibreSearch
+  instance_name: Libre Search
 
 plugins:
   searx.plugins.calculator.SXNGPlugin:
