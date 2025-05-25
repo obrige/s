@@ -1,30 +1,49 @@
+---
 use_default_settings: true
+
+server:
+  limiter: false
+  image_proxy: true
+
+redis:
+  url: redis://dragonfly.database.svc.cluster.local:6379?db=10
+
 search:
-  autocomplete: "duckduckgo"
+  safe_search: 0
+  autocomplete: quark
   formats:
     - html
     - json
-server:
-  secret_key: "%(ENV_SEARXNG_SECRET)s"  # change this!
-  limiter: true  # can be disabled for a private instance
-  image_proxy: true
+
+general:
+  instance_name: LibreSearch
+
 ui:
   static_use_hash: true
-engines:    
-  - name: brave
-    engine: brave
-    shortcut: br
-    time_range_support: true
-    paging: true
-    disabled: true
-    categories: [general, web]
-    brave_category: search
+  default_theme: simple
+  theme_args:
+    simple_style: dark
+  infinite_scroll: true
+  results_on_new_tab: true
 
-  - name: startpage
-    engine: startpage
-    shortcut: sp
-    startpage_categ: web
-    disabled: true
-    categories: [general, web]
-    additional_tests:
-      rosebud: *test_rosebud
+enabled_plugins:
+  - Basic Calculator
+  - Hash plugin
+  - Hostnames plugin
+  - Open Access DOI rewrite
+  - Self Informations
+  - Tracker URL remover
+  - Unit converter plugin
+
+hostnames:
+  high_priority:
+    - (.*)\/blog\/(.*)
+    - (.*\.)?wikipedia.org$
+    - (.*\.)?github.com$
+    - (.*\.)?reddit.com$
+    - (.*\.)?linuxserver.io$
+    - (.*\.)?docker.com$
+    - (.*\.)?archlinux.org$
+    - (.*\.)?stackoverflow.com$
+    - (.*\.)?askubuntu.com$
+    - (.*\.)?superuser.com$
