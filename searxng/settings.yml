@@ -8,7 +8,7 @@ search:
 
 server:
   secret_key: "%(ENV_SEARXNG_SECRET)s"  
-  limiter: true
+  limiter: false
   image_proxy: true
   
 general:
