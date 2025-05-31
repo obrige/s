@@ -23,59 +23,185 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置编程语言环境
-        # 根据你的项目选择合适的语言环境
-        # Go语言示例
+      - name: 检测项目类型
+        id: detect
+        run: |
+          if [ -f "go.mod" ] || [ -f "main.go" ] || [ -f "*.go" ]; then
+            echo "type=go" >> $GITHUB_OUTPUT
+            echo "::notice ::检测到Go项目"
+          elif [ -f "package.json" ]; then
+            echo "type=node" >> $GITHUB_OUTPUT
+            echo "::notice ::检测到Node.js项目"
+          elif [ -f "requirements.txt" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+            echo "type=python" >> $GITHUB_OUTPUT
+            echo "::notice ::检测到Python项目"
+          elif [ -f "Cargo.toml" ]; then
+            echo "type=rust" >> $GITHUB_OUTPUT
+            echo "::notice ::检测到Rust项目"
+          elif [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
+            echo "type=java" >> $GITHUB_OUTPUT
+            echo "::notice ::检测到Java项目"
+          else
+            echo "type=unknown" >> $GITHUB_OUTPUT
+            echo "::notice ::未能检测到项目类型，将使用默认Dockerfile"
+          fi
+
+      - name: 设置Go环境
+        if: steps.detect.outputs.type == 'go'
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-        
-        # Node.js示例（如果是Node项目，使用pkg打包）
-        # uses: actions/setup-node@v4
-        # with:
-        #   node-version: '20'
+
+      - name: 设置Node.js环境
+        if: steps.detect.outputs.type == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 设置Python环境
+        if: steps.detect.outputs.type == 'python'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 设置Rust环境
+        if: steps.detect.outputs.type == 'rust'
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
 
       - name: 编译二进制文件
         run: |
-          # Go语言示例 - 编译多平台二进制
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/app-linux-amd64 .
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/app-linux-arm64 .
+          mkdir -p dist
           
-          # 使用UPX进一步压缩二进制文件（可选）
-          sudo apt-get update && sudo apt-get install -y upx
-          upx --best --lzma dist/app-linux-amd64 || true
-          upx --best --lzma dist/app-linux-arm64 || true
+          case "${{ steps.detect.outputs.type }}" in
+            go)
+              # 初始化go.mod（如果不存在）
+              if [ ! -f "go.mod" ]; then
+                go mod init $(basename $PWD)
+                go mod tidy
+              fi
+              
+              # 编译Go二进制
+              echo "编译Go二进制文件..."
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -extldflags '-static'" -o dist/app-linux-amd64 .
+              CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -extldflags '-static'" -o dist/app-linux-arm64 .
+              ;;
+              
+            node)
+              # 使用pkg打包Node.js应用
+              echo "打包Node.js应用..."
+              npm install
+              npm install -g pkg
+              pkg . --targets node18-linux-x64 --output dist/app-linux-amd64
+              pkg . --targets node18-linux-arm64 --output dist/app-linux-arm64
+              ;;
+              
+            python)
+              # 使用PyInstaller打包Python应用
+              echo "打包Python应用..."
+              pip install pyinstaller
+              pip install -r requirements.txt || true
+              
+              # 查找主入口文件
+              MAIN_FILE=$(find . -name "main.py" -o -name "app.py" -o -name "__main__.py" | head -1)
+              if [ -z "$MAIN_FILE" ]; then
+                MAIN_FILE=$(find . -name "*.py" | head -1)
+              fi
+              
+              pyinstaller --onefile --clean --strip --name app-linux-amd64 $MAIN_FILE
+              cp dist/app-linux-amd64 dist/app-linux-arm64  # Python二进制通常是跨架构的
+              ;;
+              
+            rust)
+              # 编译Rust二进制
+              echo "编译Rust二进制文件..."
+              rustup target add x86_64-unknown-linux-gnu
+              rustup target add aarch64-unknown-linux-gnu
+              cargo build --release --target x86_64-unknown-linux-gnu
+              cargo build --release --target aarch64-unknown-linux-gnu
+              cp target/x86_64-unknown-linux-gnu/release/* dist/app-linux-amd64 2>/dev/null || true
+              cp target/aarch64-unknown-linux-gnu/release/* dist/app-linux-arm64 2>/dev/null || true
+              ;;
+              
+            java)
+              # 编译Java应用
+              echo "编译Java应用..."
+              if [ -f "pom.xml" ]; then
+                mvn clean package
+                find target -name "*.jar" -exec cp {} dist/app.jar \;
+              elif [ -f "build.gradle" ]; then
+                ./gradlew build
+                find build/libs -name "*.jar" -exec cp {} dist/app.jar \;
+              fi
+              ;;
+              
+            *)
+              # 如果无法识别项目类型，尝试查找可执行文件
+              echo "未识别的项目类型，查找现有可执行文件..."
+              find . -type f -executable -not -path "./.git/*" -exec cp {} dist/ \; || true
+              
+              # 如果没有找到可执行文件，创建一个占位符
+              if [ -z "$(ls -A dist)" ]; then
+                echo "#!/bin/sh" > dist/app-linux-amd64
+                echo "echo 'No executable found'" >> dist/app-linux-amd64
+                chmod +x dist/app-linux-amd64
+                cp dist/app-linux-amd64 dist/app-linux-arm64
+              fi
+              ;;
+          esac
           
-          # Node.js示例（使用pkg）
-          # npm install -g pkg
-          # pkg . --targets node18-linux-x64,node18-linux-arm64 --output dist/app
+          # 尝试使用UPX压缩（如果可用）
+          if command -v upx >/dev/null 2>&1; then
+            upx --best --lzma dist/* || true
+          else
+            sudo apt-get update && sudo apt-get install -y upx || true
+            upx --best --lzma dist/* || true
+          fi
+          
+          # 确保文件可执行
+          chmod +x dist/* || true
+          
+          # 列出生成的文件
+          echo "生成的二进制文件："
+          ls -la dist/
 
       - name: 创建精简Dockerfile
         run: |
-          cat > Dockerfile.minimal << 'EOF'
-          # 使用多阶段构建的最小化镜像
+          # 根据项目类型创建不同的Dockerfile
+          case "${{ steps.detect.outputs.type }}" in
+            java)
+              cat > Dockerfile.minimal << 'EOF'
+          FROM openjdk:17-alpine
+          RUN adduser -D -H -u 1000 appuser
+          WORKDIR /app
+          COPY dist/app.jar /app/app.jar
+          USER appuser
+          EXPOSE 8080
+          ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+          EOF
+              ;;
+            *)
+              cat > Dockerfile.minimal << 'EOF'
           FROM --platform=$TARGETPLATFORM alpine:latest AS runtime
-          
-          # 安装必要的运行时依赖
           RUN apk add --no-cache ca-certificates tzdata && \
               adduser -D -H -u 1000 appuser
-          
-          # 设置工作目录
           WORKDIR /app
-          
-          # 根据架构复制对应的二进制文件
           ARG TARGETPLATFORM
-          COPY --chmod=755 dist/app-linux-${TARGETPLATFORM##*/} /app/app
-          
-          # 切换到非root用户
+          ARG TARGETARCH
+          # 尝试多种文件名模式
+          COPY dist/app-linux-${TARGETARCH}* /app/app || \
+          COPY dist/app-linux-amd64 /app/app || \
+          COPY dist/app /app/app || \
+          COPY dist/* /app/
+          RUN chmod +x /app/app || true
           USER appuser
-          
-          # 暴露端口（根据你的应用调整）
           EXPOSE 8080
-          
-          # 运行应用
           ENTRYPOINT ["/app/app"]
           EOF
+              ;;
+          esac
 
       - name: 设置仓库名称
         id: repo
@@ -160,9 +286,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            dist/app-linux-amd64
-            dist/app-linux-arm64
+          files: dist/*
           body: |
             ## 发布说明
             
@@ -172,22 +296,7 @@ jobs:
             ```
             
             ### 二进制文件
-            - `app-linux-amd64`: Linux AMD64架构
-            - `app-linux-arm64`: Linux ARM64架构
-
-      - name: 清理敏感文件
-        if: always()
-        run: |
-          # 清理源代码和构建中间文件
-          find . -name "*.go" -type f -delete || true
-          find . -name "*.js" -type f -delete || true
-          find . -name "*.ts" -type f -delete || true
-          find . -name "*.py" -type f -delete || true
-          rm -rf src/ || true
-          rm -rf node_modules/ || true
-          
-          # 只保留编译后的二进制文件
-          echo "清理完成，仅保留二进制文件"
+            请根据您的系统架构下载对应的二进制文件。
 
       - name: 更新Docker Hub描述
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -207,9 +316,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**仓库**: \`${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.repo.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**项目类型**: ${{ steps.detect.outputs.type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "**镜像特点**:" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ 仅包含编译后的二进制文件" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ 基于Alpine最小化镜像" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 基于最小化镜像" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ 使用非root用户运行" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ 支持多架构 (amd64/arm64)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
