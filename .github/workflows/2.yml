@@ -1,0 +1,219 @@
+name: 构建二进制包并推送Docker镜像到Docker Hub
+
+permissions: write-all        
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置编程语言环境
+        # 根据你的项目选择合适的语言环境
+        # Go语言示例
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+        
+        # Node.js示例（如果是Node项目，使用pkg打包）
+        # uses: actions/setup-node@v4
+        # with:
+        #   node-version: '20'
+
+      - name: 编译二进制文件
+        run: |
+          # Go语言示例 - 编译多平台二进制
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/app-linux-amd64 .
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/app-linux-arm64 .
+          
+          # 使用UPX进一步压缩二进制文件（可选）
+          sudo apt-get update && sudo apt-get install -y upx
+          upx --best --lzma dist/app-linux-amd64 || true
+          upx --best --lzma dist/app-linux-arm64 || true
+          
+          # Node.js示例（使用pkg）
+          # npm install -g pkg
+          # pkg . --targets node18-linux-x64,node18-linux-arm64 --output dist/app
+
+      - name: 创建精简Dockerfile
+        run: |
+          cat > Dockerfile.minimal << 'EOF'
+          # 使用多阶段构建的最小化镜像
+          FROM --platform=$TARGETPLATFORM alpine:latest AS runtime
+          
+          # 安装必要的运行时依赖
+          RUN apk add --no-cache ca-certificates tzdata && \
+              adduser -D -H -u 1000 appuser
+          
+          # 设置工作目录
+          WORKDIR /app
+          
+          # 根据架构复制对应的二进制文件
+          ARG TARGETPLATFORM
+          COPY --chmod=755 dist/app-linux-${TARGETPLATFORM##*/} /app/app
+          
+          # 切换到非root用户
+          USER appuser
+          
+          # 暴露端口（根据你的应用调整）
+          EXPOSE 8080
+          
+          # 运行应用
+          ENTRYPOINT ["/app/app"]
+          EOF
+
+      - name: 设置仓库名称
+        id: repo
+        run: |
+          # 优先级：Secrets > 环境变量 > GitHub仓库名
+          if [ -n "${{ secrets.CUSTOM_REPO_NAME }}" ]; then
+            REPO_NAME="${{ secrets.CUSTOM_REPO_NAME }}"
+            echo "::notice ::使用Secrets中的自定义仓库名"
+          elif [ -n "${{ vars.CUSTOM_REPO_NAME }}" ]; then
+            REPO_NAME="${{ vars.CUSTOM_REPO_NAME }}"
+            echo "::notice ::使用Variables中的自定义仓库名"
+          else
+            REPO_NAME="${{ github.event.repository.name }}"
+            echo "::notice ::使用GitHub仓库名"
+          fi
+          
+          # 转换为小写并验证格式
+          REPO_NAME=$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')
+          
+          # 验证仓库名格式（Docker Hub要求）
+          if ! echo "${REPO_NAME}" | grep -qE '^[a-z0-9][a-z0-9_.-]{0,254}$'; then
+            echo "::error ::仓库名格式无效: ${REPO_NAME}"
+            exit 1
+          fi
+          
+          echo "name=${REPO_NAME}" >> $GITHUB_OUTPUT
+          echo "::notice ::最终使用的仓库名: ${REPO_NAME}"
+
+      - name: 设置Docker元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.repo.outputs.name }}
+          flavor: |
+            latest=auto
+            prefix=
+            suffix=
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{date 'YYYYMMDD'}},enable={{is_default_branch}}
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}},enable={{is_default_branch}}
+            type=sha,prefix={{branch}}-,enable={{is_default_branch}}
+            type=sha,format=short
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: 设置QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 设置Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录到Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送Docker镜像
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.minimal
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VCS_REF=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+            VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+
+      - name: 创建并上传二进制发布包
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/app-linux-amd64
+            dist/app-linux-arm64
+          body: |
+            ## 发布说明
+            
+            ### Docker镜像
+            ```bash
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.repo.outputs.name }}:${{ github.ref_name }}
+            ```
+            
+            ### 二进制文件
+            - `app-linux-amd64`: Linux AMD64架构
+            - `app-linux-arm64`: Linux ARM64架构
+
+      - name: 清理敏感文件
+        if: always()
+        run: |
+          # 清理源代码和构建中间文件
+          find . -name "*.go" -type f -delete || true
+          find . -name "*.js" -type f -delete || true
+          find . -name "*.ts" -type f -delete || true
+          find . -name "*.py" -type f -delete || true
+          rm -rf src/ || true
+          rm -rf node_modules/ || true
+          
+          # 只保留编译后的二进制文件
+          echo "清理完成，仅保留二进制文件"
+
+      - name: 更新Docker Hub描述
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peter-evans/dockerhub-description@v3
+        continue-on-error: true
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.repo.outputs.name }}
+          readme-filepath: ./README.md
+          short-description: ${{ github.event.repository.description }}
+
+      - name: 输出镜像信息
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "### 🐳 Docker镜像已推送" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**仓库**: \`${{ secrets.DOCKERHUB_USERNAME }}/${{ steps.repo.outputs.name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**镜像特点**:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 仅包含编译后的二进制文件" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 基于Alpine最小化镜像" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 使用非root用户运行" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ 支持多架构 (amd64/arm64)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**标签**:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
