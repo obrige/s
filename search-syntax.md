@@ -49,11 +49,11 @@ Libre Search支持[DuckDuckGo]的外部bangs。要直接跳转到外部搜索页
 
   - {{search('!! Wau Holland')}}
 
-请记住，您被重定向的结果不能被验证为可信，当使用此功能时，SearXNG 无法保护您的个人隐私。请自行承担风险。
+请记住，您被重定向的结果不能被验证为可信，当使用此功能时，Libre Search无法保护您的个人隐私。请自行承担风险。
 
 ## 特殊查询
 
-在 {{link('preferences', 'preferences')}} 页面中，您可以找到_特殊查询_的关键词。以下是一些例子：
+在{{link('preferences', 'preferences')}}页面中，您可以找到_特殊查询_的关键词。以下是一些例子：
 
 - 生成一个随机UUID
 
